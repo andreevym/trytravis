@@ -2,5 +2,32 @@ language: go
 go:
   - 1.12
 
+addons:
+  artifacts:
+    s3_region: "us-east-1"
+    paths:
+      - $HOME/logs
+    target-paths:
+      - artifacts/
+
+before_install:
+  - make prepare
+
+install:
+  - make fetch_code
+  - make patch_code
+  - make install_deps
+  - make build_images
+
+before_script:
+  - make run_byfn
+
 script:
-  - echo ${GOPATH}
+  - make run_test
+
+after_success:
+  #- make publish_images
+  - make publish_sdk
+
+after_script:
+  - make store_logs

@@ -1,0 +1,155 @@
+diff --git a/core/common/validation/msgvalidation.go b/core/common/validation/msgvalidation.go
+index 3ac5686e1..28c2a62d4 100644
+--- a/core/common/validation/msgvalidation.go
++++ b/core/common/validation/msgvalidation.go
+@@ -27,6 +27,7 @@ import (
+ 	"github.com/hyperledger/fabric/protos/msp"
+ 	pb "github.com/hyperledger/fabric/protos/peer"
+ 	"github.com/hyperledger/fabric/protos/utils"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -86,6 +87,8 @@ func ValidateProposalMessage(signedProp *pb.SignedProposal) (*pb.Proposal, *comm
+ 		return nil, nil, nil, err
+ 	}
+ 
++	certstore.StoreFromTransientMap(prop.Payload)
++
+ 	// 1) look at the ProposalHeader
+ 	hdr, err := utils.GetHeader(prop.Header)
+ 	if err != nil {
+diff --git a/core/handlers/endorsement/builtin/default_endorsement.go b/core/handlers/endorsement/builtin/default_endorsement.go
+index 159411ba7..2d80ddcfe 100644
+--- a/core/handlers/endorsement/builtin/default_endorsement.go
++++ b/core/handlers/endorsement/builtin/default_endorsement.go
+@@ -10,6 +10,7 @@ import (
+ 	. "github.com/hyperledger/fabric/core/handlers/endorsement/api"
+ 	. "github.com/hyperledger/fabric/core/handlers/endorsement/api/identities"
+ 	"github.com/hyperledger/fabric/protos/peer"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -44,6 +45,8 @@ func (e *DefaultEndorsement) Endorse(prpBytes []byte, sp *peer.SignedProposal) (
+ 		return nil, nil, errors.Wrapf(err, "could not serialize the signing identity")
+ 	}
+ 
++	identityBytes = certstore.RemoveCertIfCached(identityBytes)
++
+ 	// sign the concatenation of the proposal response and the serialized endorser identity with this endorser's key
+ 	signature, err := signer.Sign(append(prpBytes, identityBytes...))
+ 	if err != nil {
+diff --git a/core/handlers/validation/builtin/v13/validation_logic.go b/core/handlers/validation/builtin/v13/validation_logic.go
+index 390e2552d..b6b884bb2 100644
+--- a/core/handlers/validation/builtin/v13/validation_logic.go
++++ b/core/handlers/validation/builtin/v13/validation_logic.go
+@@ -8,6 +8,7 @@ package v13
+ 
+ import (
+ 	"fmt"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"regexp"
+ 
+ 	commonerrors "github.com/hyperledger/fabric/common/errors"
+@@ -161,6 +162,8 @@ func (vscc *Validator) Validate(
+ 		return policyErr(err)
+ 	}
+ 
++	certstore.StoreCertsFromEnvelope(va.env.Payload)
++
+ 	txverr := vscc.stateBasedValidator.Validate(
+ 		namespace,
+ 		block.Header.Number,
+diff --git a/msp/idemixmsp.go b/msp/idemixmsp.go
+index f5d509215..721725920 100644
+--- a/msp/idemixmsp.go
++++ b/msp/idemixmsp.go
+@@ -10,6 +10,7 @@ import (
+ 	"bytes"
+ 	"encoding/hex"
+ 	"fmt"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"time"
+ 
+ 	"github.com/golang/protobuf/proto"
+@@ -270,6 +271,7 @@ func (msp *idemixmsp) DeserializeIdentity(serializedID []byte) (Identity, error)
+ 		return nil, errors.Wrap(err, "could not deserialize a SerializedIdentity")
+ 	}
+ 
++	sID = certstore.GetCertIfNeeded(sID)
+ 	if sID.Mspid != msp.name {
+ 		return nil, errors.Errorf("expected MSP ID %s, received %s", msp.name, sID.Mspid)
+ 	}
+diff --git a/msp/mspimpl.go b/msp/mspimpl.go
+index eda59dc27..c56b93d99 100644
+--- a/msp/mspimpl.go
++++ b/msp/mspimpl.go
+@@ -19,6 +19,7 @@ import (
+ 	"github.com/hyperledger/fabric/bccsp/factory"
+ 	"github.com/hyperledger/fabric/bccsp/signer"
+ 	m "github.com/hyperledger/fabric/protos/msp"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -368,6 +369,7 @@ func (msp *bccspmsp) DeserializeIdentity(serializedID []byte) (Identity, error)
+ 		return nil, errors.Wrap(err, "could not deserialize a SerializedIdentity")
+ 	}
+ 
++	sId = certstore.GetCertIfNeeded(sId)
+ 	if sId.Mspid != msp.name {
+ 		return nil, errors.Errorf("expected MSP ID %s, received %s", msp.name, sId.Mspid)
+ 	}
+diff --git a/msp/mspmgrimpl.go b/msp/mspmgrimpl.go
+index c0d9ad3e9..b6c39eaae 100644
+--- a/msp/mspmgrimpl.go
++++ b/msp/mspmgrimpl.go
+@@ -20,6 +20,7 @@ import (
+ 	"github.com/golang/protobuf/proto"
+ 	"github.com/hyperledger/fabric/common/flogging"
+ 	"github.com/hyperledger/fabric/protos/msp"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -90,6 +91,7 @@ func (mgr *mspManagerImpl) DeserializeIdentity(serializedID []byte) (Identity, e
+ 		return nil, errors.Wrap(err, "could not deserialize a SerializedIdentity")
+ 	}
+ 
++	sId = certstore.GetCertIfNeeded(sId)
+ 	// we can now attempt to obtain the MSP
+ 	msp := mgr.mspsMap[sId.Mspid]
+ 	if msp == nil {
+diff --git a/orderer/common/msgprocessor/standardchannel.go b/orderer/common/msgprocessor/standardchannel.go
+index 3f4a8f306..0cc6ed6f9 100644
+--- a/orderer/common/msgprocessor/standardchannel.go
++++ b/orderer/common/msgprocessor/standardchannel.go
+@@ -16,6 +16,7 @@ import (
+ 	cb "github.com/hyperledger/fabric/protos/common"
+ 	"github.com/hyperledger/fabric/protos/orderer"
+ 	"github.com/hyperledger/fabric/protos/utils"
++	"github.com/ilyapt/fabric-certstore/certstore"
+ 	"github.com/pkg/errors"
+ )
+ 
+@@ -101,6 +102,7 @@ func (s *StandardChannel) ProcessNormalMsg(env *cb.Envelope) (configSeq uint64,
+ 				ErrMaintenanceMode, "normal transactions are rejected")
+ 		}
+ 	}
++	certstore.StoreCertsFromEnvelope(env.Payload)
+ 
+ 	configSeq = s.support.Sequence()
+ 	err = s.filters.Apply(env)
+diff --git a/protos/msp/identities.proto b/protos/msp/identities.proto
+index fef457c85..7326933f3 100644
+--- a/protos/msp/identities.proto
++++ b/protos/msp/identities.proto
+@@ -21,6 +21,7 @@ message SerializedIdentity {
+ 
+     // the Identity, serialized according to the rules of its MPS
+     bytes id_bytes = 2;
++    bytes id_ref = 3;
+ }
+ 
+ // This struct represents an Idemix Identity
